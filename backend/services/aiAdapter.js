@@ -9,7 +9,7 @@ const FAST_API_URL = config.AI_SERVICE_URL;
  */
 const checkHealth = async () => {
   try {
-    const res = await fetch(`${FAST_API_URL}/health`, { signal: AbortSignal.timeout(1000) });
+    const res = await fetch(`${FAST_API_URL}/health`, { signal: AbortSignal.timeout(8000) });
     return res.ok;
   } catch (err) {
     return false;
@@ -36,7 +36,8 @@ const generateImageEmbedding = async (imagePath) => {
     const startTime = Date.now();
     const response = await fetch(`${FAST_API_URL}/embed-image`, {
       method: 'POST',
-      body: formData
+      body: formData,
+      signal: AbortSignal.timeout(120000)
     });
 
     if (!response.ok) {
@@ -64,7 +65,8 @@ const generateTextEmbedding = async (text) => {
     const response = await fetch(`${FAST_API_URL}/embed-text`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text })
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(120000)
     });
 
     if (!response.ok) {
@@ -103,7 +105,8 @@ const processImageDocument = async (imagePath) => {
     const startTime = Date.now();
     const response = await fetch(`${FAST_API_URL}/process-document`, {
       method: 'POST',
-      body: formData
+      body: formData,
+      signal: AbortSignal.timeout(120000)
     });
 
     if (!response.ok) {
