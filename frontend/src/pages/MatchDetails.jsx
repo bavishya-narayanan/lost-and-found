@@ -44,7 +44,7 @@ export default function MatchDetails() {
             <span className="text-xs uppercase font-bold text-red-400 tracking-wider mb-4 block">Lost Item</span>
             <div className="aspect-video w-full rounded-xl overflow-hidden bg-zinc-900 mb-4">
               {match.lostItem.image ? (
-                <img src={`${BACKEND}${match.lostItem.image}`} alt={match.lostItem.title} className="w-full h-full object-cover" />
+                <img src={match.lostItem.image.startsWith('http') ? match.lostItem.image : `${BACKEND}${match.lostItem.image}`} alt={match.lostItem.title} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-zinc-600 text-sm">No Image</div>
               )}
@@ -62,7 +62,7 @@ export default function MatchDetails() {
             <span className="text-xs uppercase font-bold text-green-400 tracking-wider mb-4 block">Found Item</span>
             <div className="aspect-video w-full rounded-xl overflow-hidden bg-zinc-900 mb-4">
               {match.foundItem.image ? (
-                <img src={`${BACKEND}${match.foundItem.image}`} alt={match.foundItem.title} className="w-full h-full object-cover" />
+                <img src={match.foundItem.image.startsWith('http') ? match.foundItem.image : `${BACKEND}${match.foundItem.image}`} alt={match.foundItem.title} className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center text-zinc-600 text-sm">No Image</div>
               )}
