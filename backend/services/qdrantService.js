@@ -128,8 +128,11 @@ const upsertVector = async (collectionName, reportId, vector, payload) => {
 const searchVectors = async (collectionName, vector, filters = {}, limit = config.TOP_K) => {
   try {
     const filterMust = [];
-    
-    // Construct metadata filters
+    const usesStrictFiltering = Boolean(filters.reportType || filters.status || filters.category || (filters.campusZone && filters.campusZone !== 'Unknown'));
+
+    // Qdrant Cloud requires payload keys to be indexed before they can be used in filters.
+    // To avoid runtime failures, we only apply filters when they are known-safe and otherwise
+    // we perform a broader semantic search over the whole collection.
     if (filters.reportType) {
       filterMust.push({ key: 'reportType', match: { value: filters.reportType } });
     }
@@ -148,11 +151,12 @@ const searchVectors = async (collectionName, vector, filters = {}, limit = confi
     const body = {
       vector,
       limit,
-      filter: {
-        must: filterMust
-      },
       with_payload: true
     };
+
+    if (usesStrictFiltering && filterMust.length > 0) {
+      body.filter = { must: filterMust };
+    }
 
     const res = await fetch(`${QDRANT_URL}/collections/${collectionName}/points/search`, {
       method: 'POST',
