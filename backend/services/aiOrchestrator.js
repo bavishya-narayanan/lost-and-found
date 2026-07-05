@@ -140,12 +140,12 @@ const processAndMatchReport = async (item, itemType) => {
   let finalMatchesCount = 0;
 
   try {
-    // ── Check if FastAPI is available first ──────────────────
+    // Prefer the embedding pipeline even when the remote AI service is temporarily unavailable.
+    // The adapter already has local fallback logic for text/image embeddings, so we should not
+    // skip Qdrant ingestion and matching just because the remote service is down.
     const aiOnline = await aiAdapter.checkHealth();
     if (!aiOnline) {
-      console.warn(`[AI Orchestrator] ⚠️  FastAPI offline — switching to keyword fallback matcher.`);
-      finalMatchesCount = await fallbackMatch(item, itemType);
-      return;
+      console.warn(`[AI Orchestrator] ⚠️  FastAPI health check failed — continuing with local embedding fallbacks.`);
     }
 
     const hasImage = !!item.image;
@@ -244,7 +244,7 @@ const processAndMatchReport = async (item, itemType) => {
 
   } catch (error) {
     console.error(`[AI Orchestrator] Error processing report ${item._id}:`, error.message);
-    // Last-resort fallback
+    // Last-resort fallback for unexpected pipeline failures.
     try {
       console.warn(`[AI Orchestrator] Attempting fallback keyword matching...`);
       await fallbackMatch(item, itemType);
