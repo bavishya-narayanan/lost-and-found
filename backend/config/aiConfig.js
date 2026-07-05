@@ -28,6 +28,7 @@ module.exports = {
 
   // Qdrant Config
   QDRANT_URL: process.env.QDRANT_URL || 'http://localhost:6333',
+  QDRANT_API_KEY: process.env.QDRANT_API_KEY || '',
 
   // FastAPI Config
   AI_SERVICE_URL: process.env.AI_SERVICE_URL || 'http://localhost:8000'

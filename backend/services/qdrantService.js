@@ -2,6 +2,12 @@ const config = require('../config/aiConfig');
 
 const QDRANT_URL = config.QDRANT_URL;
 
+const getQdrantHeaders = () => {
+  const headers = { 'Content-Type': 'application/json' };
+  if (config.QDRANT_API_KEY) headers['api-key'] = config.QDRANT_API_KEY;
+  return headers;
+};
+
 /**
  * Deterministically convert a 24-character MongoDB ObjectId into a 36-character UUID string.
  */
@@ -18,7 +24,7 @@ const initCollections = async () => {
     const collections = ['image_embeddings', 'text_embeddings'];
     
     // Check existing — let connection errors propagate to the caller
-    const res = await fetch(`${QDRANT_URL}/collections`);
+    const res = await fetch(`${QDRANT_URL}/collections`, { headers: getQdrantHeaders() });
     if (!res.ok) {
       console.warn('Qdrant server returned an error. Skipping collection initialization.');
       return;
@@ -33,7 +39,7 @@ const initCollections = async () => {
         
         const createRes = await fetch(`${QDRANT_URL}/collections/${name}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: getQdrantHeaders(),
           body: JSON.stringify({
             vectors: {
               size,
@@ -98,7 +104,7 @@ const upsertVector = async (collectionName, reportId, vector, payload) => {
 
     const res = await fetch(`${QDRANT_URL}/collections/${collectionName}/points?wait=true`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getQdrantHeaders(),
       body: JSON.stringify(body)
     });
 
@@ -150,7 +156,7 @@ const searchVectors = async (collectionName, vector, filters = {}, limit = confi
 
     const res = await fetch(`${QDRANT_URL}/collections/${collectionName}/points/search`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: getQdrantHeaders(),
       body: JSON.stringify(body)
     });
 
