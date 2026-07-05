@@ -1,0 +1,181 @@
+# Qdrant Vector Storage — Complete Investigation Report
+
+---
+
+## 1. Which File Is Responsible for Storing Vectors?
+
+**File:** [`backend/services/qdrantService.js`](file:///c:/Users/BAVISHYA/Desktop/lost-and-found/backend/services/qdrantService.js)
+
+| What gets stored | Function | Collection |
+|---|---|---|
+| Text embeddings (384-dim) | `upsertVector('text_embeddings', ...)` | `text_embeddings` |
+| Image embeddings (512-dim) | `upsertVector('image_embeddings', ...)` | `image_embeddings` |
+
+The same function `upsertVector` handles both — it just takes a different `collectionName` argument.
+
+---
+
+## 2. Complete Execution Flow
+
+```
+User uploads a Lost/Found report (with image)
+         │
+         ▼
+lostItemController.js → foundItemController.js
+  → await aiOrchestrator.processAndMatchReport(item, type)
+         │
+         ▼
+aiOrchestrator.js → embeddingPipeline.processReport(title, desc, hasImage, imagePath)
+         │
+         ▼ (calls FastAPI on http://localhost:8000)
+         │
+         ├─── processImageDocument(imagePath)
+         │         EasyOCR → reads text from image
+         │         spaCy NER → extracts name, roll, bank, etc.
+         │         Returns: { ocrText, detectedEntities, isSensitive }
+         │
+         ├─── generateImageEmbedding(imagePath)
+         │         OpenCLIP ViT-B-32 → produces 512-dim vector
+         │         Returns: { embedding: float[512], latency }
+         │
+         └─── generateTextEmbedding("title + description + ocrSummary")
+                   Sentence Transformer all-MiniLM-L6-v2 → 384-dim vector
+                   Returns: { embedding: float[384], latency }
+         │
+         ▼
+aiOrchestrator.js
+  → Saves OCR results to MongoDB (isSensitive, ocrText, detectedEntities)
+         │
+         ▼
+qdrantService.upsertVector('text_embeddings', id, textEmbedding, payload)
+  → PUT http://localhost:6333/collections/text_embeddings/points
+         │
+         ▼
+qdrantService.upsertVector('image_embeddings', id, imageEmbedding, payload)   [only if image exists]
+  → PUT http://localhost:6333/collections/image_embeddings/points
+         │
+         ▼
+matchingService.findMatches()
+  → Searches Qdrant for opposite-type candidates
+  → Hybrid scoring: Image sim + Semantic sim + Category + Location + Date
+  → If score ≥ 40 → Match document saved in MongoDB
+  → Notifications created for both users
+```
+
+---
+
+## 3. Where Vectors Are Physically Stored on Disk
+
+All Qdrant data lives here on your computer:
+
+```
+c:\Users\BAVISHYA\Desktop\lost-and-found\backend\qdrant-bin\
+├── qdrant.exe                   ← The database server binary
+├── .qdrant-initialized          ← First-run marker
+├── snapshots\                   ← EMPTY (manual exports only, none taken yet)
+│   ├── image_embeddings\
+│   ├── text_embeddings\
+│   └── tmp\
+└── storage\                     ← THIS IS WHERE YOUR VECTORS LIVE
+    ├── raft_state.json          ← Cluster consensus state
+    ├── aliases\                 ← Collection aliases (none configured)
+    └── collections\
+        ├── image_embeddings\
+        │   ├── config.json      ← Collection config (size:512, Cosine distance)
+        │   ├── version.info
+        │   └── 0\              ← Shard 0 (single shard)
+        │       ├── shard_config.json
+        │       ├── replica_state.json
+        │       ├── wal\         ← Write-Ahead Log (WAL)
+        │       │   ├── open-1  ← 32MB WAL segment (upserted vectors buffer here)
+        │       │   └── open-2  ← Second WAL segment
+        │       └── segments\   ← 8 segments (each a self-contained vector index)
+        │           ├── 4c768f31.../
+        │           ├── 4f995a68.../
+        │           └── ... (6 more)
+        └── text_embeddings\
+            ├── config.json      ← Collection config (size:384, Cosine distance)
+            └── 0\
+                ├── wal\
+                └── segments\   ← 8 segments
+```
+
+### What files contain the actual vectors?
+
+| File/Folder | Contents |
+|---|---|
+| `wal/open-1`, `wal/open-2` | **Newly upserted vectors** — they are written here first (32 MB buffers) |
+| `segments/<uuid>/` | **Flushed, indexed vectors** — once WAL is flushed, data moves here into binary segment files |
+| `config.json` | Collection configuration (dimension size, distance metric, HNSW settings) |
+
+### Why is `snapshots/` empty?
+Snapshots are **manual exports** — they are only created when you explicitly call `POST /collections/image_embeddings/snapshots`. They are not automatic. Since you haven't triggered a snapshot, those folders are empty. Snapshots are just backup exports (like a `.zip` of the collection); your actual data is in `storage/collections/`.
+
+---
+
+## 4. Current Vector Counts (Verified via REST API)
+
+| Collection | Points Stored | Dimension | Distance | Status |
+|---|---|---|---|---|
+| `image_embeddings` | **4 vectors** | 512 | Cosine | 🟢 Green |
+| `text_embeddings` | **7 vectors** | 384 | Cosine | 🟢 Green |
+
+> These come from the test runs performed earlier in this session (test_pipeline.js was run multiple times, creating dummy Lost + Found items).
+
+> **Note:** `indexed_vectors_count` shows `0` — this is **normal**. Qdrant only builds the HNSW index once a collection exceeds `indexing_threshold: 20,000` vectors. Below that threshold, it does a full flat scan (still correct, just not HNSW-indexed yet).
+
+---
+
+## 5. Debug Logs Now Added
+
+✅ Logs have been added to [`qdrantService.js`](file:///c:/Users/BAVISHYA/Desktop/lost-and-found/backend/services/qdrantService.js).
+
+From now on, every time a report is uploaded, your Node.js backend terminal will print:
+
+```
+[Qdrant] ──────────────────────────────────
+[Qdrant] Text embedding generated
+[Qdrant]   Vector Dimension : 384 (expected: 384)
+[Qdrant]   Model            : all-MiniLM-L6-v2
+[Qdrant] Uploading vector to Qdrant...
+[Qdrant]   Collection : text_embeddings
+[Qdrant]   Vector ID  : 00000000-6a46-5e78-f9b8-bc8f1cf98765
+[Qdrant]   Payload    : {
+    "reportId": "6a465e78...",
+    "reportType": "Lost",
+    "status": "Active",
+    "category": "Electronics",
+    "campusZone": "Main Library",
+    ...
+}
+[Qdrant] ✅ Upsert Successful → text_embeddings
+[Qdrant] ──────────────────────────────────
+
+[Qdrant] ──────────────────────────────────
+[Qdrant] Image embedding generated
+[Qdrant]   Vector Dimension : 512 (expected: 512)
+[Qdrant]   Model            : ViT-B-32 (OpenCLIP)
+[Qdrant] Uploading vector to Qdrant...
+[Qdrant]   Collection : image_embeddings
+[Qdrant]   Vector ID  : 00000000-6a46-5e78-f9b8-bc8f1cf98765
+[Qdrant] ✅ Upsert Successful → image_embeddings
+[Qdrant] ──────────────────────────────────
+
+[Qdrant] Searching text_embeddings... (filters: {...}, top-k: 30)
+[Qdrant] Retrieved 3 candidates from text_embeddings
+[Qdrant]   #1 → reportId: abc123, score: 0.9341, type: Found
+[Qdrant]   #2 → reportId: def456, score: 0.8812, type: Found
+```
+
+---
+
+## 6. Quick Self-Check URLs
+
+Open these in your browser while Qdrant is running:
+
+| Purpose | URL |
+|---|---|
+| List collections | http://localhost:6333/collections |
+| image_embeddings info | http://localhost:6333/collections/image_embeddings |
+| text_embeddings info | http://localhost:6333/collections/text_embeddings |
+| Qdrant Web Dashboard | http://localhost:6333/dashboard |

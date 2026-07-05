@@ -1,0 +1,38 @@
+# Node
+node_modules/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Environment
+.env
+.env.*
+
+# Build
+dist/
+build/
+
+# Uploads
+backend/uploads/
+
+# AI Models
+backend/ai_service/models/
+
+# Qdrant (Critical to block!)
+backend/qdrant-bin/
+backend/qdrant-storage/
+qdrant_storage/
+snapshots/
+storage/
+.qdrant-initialized
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+.DS_Store

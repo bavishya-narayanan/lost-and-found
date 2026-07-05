@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+/* ── Design Tokens ─────────────────────────────────────── */
+:root {
+  --bg-base:     #080808;
+  --bg-surface:  #111111;
+  --bg-raised:   #191919;
+  --bg-hover:    #202020;
+  --border:      rgba(255,255,255,0.08);
+  --border-sub:  rgba(255,255,255,0.04);
+  --border-hi:   rgba(255,255,255,0.14);
+  --text-1:      #fafafa;
+  --text-2:      #a1a1aa;
+  --text-3:      #52525b;
+  --text-4:      #3f3f46;
+}
+
+/* ── Global Reset ──────────────────────────────────────── */
+html { scroll-behavior: smooth; }
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg-base);
+  color: var(--text-1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+#root { min-height: 100vh; }
+
+/* ── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg-base); }
+::-webkit-scrollbar-thumb { background: #222; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #333; }
+
+/* ── Typography ────────────────────────────────────────── */
+h1,h2,h3,h4,h5,h6 { font-family: 'Inter', sans-serif; color: var(--text-1); letter-spacing: -0.02em; }
+p { color: var(--text-2); line-height: 1.7; }
+
+/* ── Selection ─────────────────────────────────────────── */
+::selection { background: rgba(255,255,255,0.15); color: #fff; }
