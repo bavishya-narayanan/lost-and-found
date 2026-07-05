@@ -158,8 +158,8 @@ const updateProfile = async (req, res) => {
 
     // Handle profile picture upload
     if (req.file) {
-      // Store relative path (e.g., /uploads/filename.jpg)
-      user.profilePic = `/uploads/${req.file.filename}`;
+      // Store Cloudinary URL directly
+      user.profilePic = req.file.path;
     }
 
     await user.save();

@@ -18,18 +18,16 @@ exports.createFoundItem = async (req, res) => {
     // Validate custodyType conditional fields
     if (custodyType === 'deposited') {
       if (!latitude || !longitude || !landmark) {
-        fs.unlinkSync(req.file.path);
         return res.status(400).json({ message: 'Location coordinates and landmark are required when item is deposited' });
       }
 
       const locationHelper = require('../utils/locationHelper');
       if (!locationHelper.isWithinCampus(latitude, longitude)) {
-        fs.unlinkSync(req.file.path);
         return res.status(400).json({ message: 'Location must be within College of Engineering, Guindy campus boundaries' });
       }
     }
 
-    const imagePath = `/uploads/${req.file.filename}`;
+    const imagePath = req.file.path;
 
     const foundItem = new FoundItem({
       title,
@@ -64,8 +62,7 @@ exports.createFoundItem = async (req, res) => {
     });
   } catch (error) {
     if (req.file) {
-        // Cleanup if DB fails
-        fs.unlinkSync(req.file.path);
+        // Cleanup if DB fails (skipped for Cloudinary)
     }
     res.status(500).json({ message: 'Failed to create found report', error: error.message });
   }
@@ -143,18 +140,16 @@ exports.updateFoundItem = async (req, res) => {
     let imagePath = item.image;
 
     if (req.file) {
-      imagePath = `/uploads/${req.file.filename}`;
+      imagePath = req.file.path;
     }
 
     if (custodyType === 'deposited') {
       if (!latitude || !longitude || !landmark) {
-        if (req.file) fs.unlinkSync(req.file.path);
         return res.status(400).json({ message: 'Location coordinates and landmark are required when item is deposited' });
       }
       
       const locationHelper = require('../utils/locationHelper');
       if (!locationHelper.isWithinCampus(latitude, longitude)) {
-        if (req.file) fs.unlinkSync(req.file.path);
         return res.status(400).json({ message: 'Location must be within College of Engineering, Guindy campus boundaries' });
       }
     }
@@ -190,7 +185,6 @@ exports.updateFoundItem = async (req, res) => {
     const updatedItem = await item.save();
     res.json(updatedItem);
   } catch (error) {
-    if (req.file) fs.unlinkSync(req.file.path);
     res.status(500).json({ message: 'Failed to update report', error: error.message });
   }
 };
@@ -211,13 +205,7 @@ exports.deleteFoundItem = async (req, res) => {
       return res.status(403).json({ message: 'User not authorized to delete this report' });
     }
 
-    // Delete image
-    if (item.image) {
-      const filePath = path.join(__dirname, '..', item.image);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
+    // Delete image (skipped for Cloudinary)
 
     await item.deleteOne();
     res.json({ message: 'Report removed' });

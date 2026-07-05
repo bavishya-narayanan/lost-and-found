@@ -21,17 +21,30 @@ const checkHealth = async () => {
  */
 const generateImageEmbedding = async (imagePath) => {
   try {
-    const normalizedPath = imagePath.startsWith('/') ? imagePath.slice(1) : imagePath;
-    const fullPath = path.join(__dirname, '..', normalizedPath);
+    let blob;
+    let filename;
+    
+    if (imagePath.startsWith('http')) {
+        const imageRes = await fetch(imagePath);
+        if (!imageRes.ok) throw new Error(`Failed to fetch image from URL: ${imagePath}`);
+        const arrayBuffer = await imageRes.arrayBuffer();
+        blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
+        filename = 'cloud_image.jpg';
+    } else {
+        const normalizedPath = imagePath.startsWith('/') ? imagePath.slice(1) : imagePath;
+        const fullPath = path.join(__dirname, '..', normalizedPath);
 
-    if (!fs.existsSync(fullPath)) {
-      throw new Error(`File not found: ${fullPath}`);
+        if (!fs.existsSync(fullPath)) {
+          throw new Error(`File not found: ${fullPath}`);
+        }
+
+        const fileBuffer = fs.readFileSync(fullPath);
+        blob = new Blob([fileBuffer], { type: 'image/jpeg' });
+        filename = path.basename(fullPath);
     }
 
-    const fileBuffer = fs.readFileSync(fullPath);
-    const blob = new Blob([fileBuffer], { type: 'image/jpeg' });
     const formData = new FormData();
-    formData.append('file', blob, path.basename(fullPath));
+    formData.append('file', blob, filename);
 
     const startTime = Date.now();
     const response = await fetch(`${FAST_API_URL}/embed-image`, {
@@ -90,17 +103,30 @@ const generateTextEmbedding = async (text) => {
  */
 const processImageDocument = async (imagePath) => {
   try {
-    const normalizedPath = imagePath.startsWith('/') ? imagePath.slice(1) : imagePath;
-    const fullPath = path.join(__dirname, '..', normalizedPath);
+    let blob;
+    let filename;
+    
+    if (imagePath.startsWith('http')) {
+        const imageRes = await fetch(imagePath);
+        if (!imageRes.ok) throw new Error(`Failed to fetch image from URL: ${imagePath}`);
+        const arrayBuffer = await imageRes.arrayBuffer();
+        blob = new Blob([arrayBuffer], { type: 'image/jpeg' });
+        filename = 'cloud_image.jpg';
+    } else {
+        const normalizedPath = imagePath.startsWith('/') ? imagePath.slice(1) : imagePath;
+        const fullPath = path.join(__dirname, '..', normalizedPath);
 
-    if (!fs.existsSync(fullPath)) {
-      throw new Error(`File not found: ${fullPath}`);
+        if (!fs.existsSync(fullPath)) {
+          throw new Error(`File not found: ${fullPath}`);
+        }
+
+        const fileBuffer = fs.readFileSync(fullPath);
+        blob = new Blob([fileBuffer], { type: 'image/jpeg' });
+        filename = path.basename(fullPath);
     }
 
-    const fileBuffer = fs.readFileSync(fullPath);
-    const blob = new Blob([fileBuffer], { type: 'image/jpeg' });
     const formData = new FormData();
-    formData.append('file', blob, path.basename(fullPath));
+    formData.append('file', blob, filename);
 
     const startTime = Date.now();
     const response = await fetch(`${FAST_API_URL}/process-document`, {

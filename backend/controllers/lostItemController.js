@@ -13,7 +13,7 @@ exports.createLostItem = async (req, res) => {
     let imagePath = null;
 
     if (req.file) {
-      imagePath = `/uploads/${req.file.filename}`;
+      imagePath = req.file.path; // Cloudinary URL
     }
 
     const lostItem = new LostItem({
@@ -115,8 +115,8 @@ exports.updateLostItem = async (req, res) => {
     let imagePath = item.image;
 
     if (req.file) {
-      // If a new image is uploaded, we could optionally delete the old one here
-      imagePath = `/uploads/${req.file.filename}`;
+      // If a new image is uploaded, we just overwrite the URL
+      imagePath = req.file.path;
     }
 
     item.title = title || item.title;
@@ -151,12 +151,7 @@ exports.deleteLostItem = async (req, res) => {
     }
 
     // Delete image if it exists
-    if (item.image) {
-      const filePath = path.join(__dirname, '..', item.image);
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    }
+    // (Note: To delete from Cloudinary, you would need the public_id. For now, we skip deletion to keep it simple)
 
     await item.deleteOne();
     res.json({ message: 'Report removed' });
