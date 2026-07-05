@@ -91,14 +91,23 @@ exports.findMatches = async (newItem, itemType, textEmbedding, imageEmbedding, c
       }
     }
 
+    let candidates = [];
     if (candidateIds.size === 0) {
-      console.log('[Matching] No candidates found in Qdrant.');
-      return { retrievedCount: 0, matchCount: 0 };
-    }
+      console.log('[Matching] No candidates found in Qdrant. Falling back to active records from MongoDB.');
+      const fallbackQuery = { status: 'Active' };
+      if (newItem.category) fallbackQuery.category = newItem.category;
 
-    // Stage 2: Re-ranking retrieved candidates
-    console.log(`[Matching] Stage 2: Re-ranking ${candidateIds.size} unique candidates...`);
-    const candidates = await targetModel.find({ _id: { $in: Array.from(candidateIds) } });
+      candidates = await targetModel.find(fallbackQuery);
+      candidates.forEach(candidate => {
+        const id = candidate._id.toString();
+        candidateIds.add(id);
+        candidateScores[id] = { textScore: null, imageScore: null };
+      });
+    } else {
+      // Stage 2: Re-ranking retrieved candidates
+      console.log(`[Matching] Stage 2: Re-ranking ${candidateIds.size} unique candidates...`);
+      candidates = await targetModel.find({ _id: { $in: Array.from(candidateIds) } });
+    }
 
     let matchCount = 0;
 
@@ -121,7 +130,11 @@ exports.findMatches = async (newItem, itemType, textEmbedding, imageEmbedding, c
       // Qdrant returns cosine values in [-1, 1], normal range [0, 1]. Multiply by 100.
       // If a candidate is missing in image retrieval, default to 0.
       const clipSimilarity = scores.imageScore ? Math.round(scores.imageScore * 100) : 0;
-      const semanticSimilarity = scores.textScore ? Math.round(scores.textScore * 100) : 0;
+      const fallbackSemanticSimilarity = calculateTextSimilarity(
+        `${lostItem.title || ''} ${lostItem.description || ''}`,
+        `${foundItem.title || ''} ${foundItem.description || ''}`
+      );
+      const semanticSimilarity = scores.textScore ? Math.round(scores.textScore * 100) : fallbackSemanticSimilarity;
 
       const catScore = calculateCategorySimilarity(lostItem.category, foundItem.category);
       const locScore = calculateTextSimilarity(lostItem.locationLost || '', foundItem.locationFound || '');

@@ -151,7 +151,11 @@ const searchVectors = async (collectionName, vector, filters = {}, limit = confi
     const body = {
       vector,
       limit,
-      with_payload: true
+      with_payload: true,
+      params: {
+        hnsw_ef: 128,
+        exact: false
+      }
     };
 
     if (usesStrictFiltering && filterMust.length > 0) {
@@ -170,6 +174,7 @@ const searchVectors = async (collectionName, vector, filters = {}, limit = confi
     }
 
     const data = await res.json();
+    console.log(`[Qdrant] Raw search response:`, JSON.stringify(data).slice(0, 2000));
     const results = data.result.map(hit => ({
       reportId: hit.payload.reportId,
       score: hit.score,
