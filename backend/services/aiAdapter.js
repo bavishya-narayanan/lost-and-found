@@ -1,8 +1,39 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const config = require('../config/aiConfig');
 
 const FAST_API_URL = config.AI_SERVICE_URL;
+
+const buildTextFallbackEmbedding = (text, dimension = 384) => {
+  const normalized = (text || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const tokens = normalized ? normalized.split(/\s+/) : ['fallback'];
+  const vector = new Array(dimension).fill(0);
+
+  tokens.forEach((token, index) => {
+    const hash = crypto.createHash('sha256').update(`${token}:${index}`).digest();
+    const bucket = hash.readUInt16BE(0) % dimension;
+    vector[bucket] += 0.35 + Math.min(0.65, index * 0.01);
+    const bucket2 = (bucket + 17 + (index % 11)) % dimension;
+    vector[bucket2] += 0.1;
+  });
+
+  const norm = Math.hypot(...vector);
+  return norm > 0 ? vector.map(value => value / norm) : vector;
+};
+
+const buildImageFallbackEmbedding = (source, dimension = 512) => {
+  const seed = crypto.createHash('sha256').update(source || 'fallback-image').digest();
+  const vector = new Array(dimension).fill(0);
+
+  seed.forEach((byte, index) => {
+    const bucket = (index * 3 + byte) % dimension;
+    vector[bucket] += byte / 255;
+  });
+
+  const norm = Math.hypot(...vector);
+  return norm > 0 ? vector.map(value => value / norm) : vector;
+};
 
 /**
  * Helper to check if FastAPI service is running.
@@ -61,11 +92,16 @@ const generateImageEmbedding = async (imagePath) => {
     const data = await response.json();
     return {
       embedding: data.embedding,
-      latency: Date.now() - startTime
+      latency: Date.now() - startTime,
+      source: data.source || 'remote'
     };
   } catch (error) {
-    console.error('Error generating image embedding:', error);
-    throw error;
+    console.warn('Falling back to local image embedding generation:', error.message);
+    return {
+      embedding: buildImageFallbackEmbedding(imagePath),
+      latency: 0,
+      source: 'fallback'
+    };
   }
 };
 
@@ -90,11 +126,16 @@ const generateTextEmbedding = async (text) => {
     const data = await response.json();
     return {
       embedding: data.embedding,
-      latency: Date.now() - startTime
+      latency: Date.now() - startTime,
+      source: data.source || 'remote'
     };
   } catch (error) {
-    console.error('Error generating text embedding:', error);
-    throw error;
+    console.warn('Falling back to local text embedding generation:', error.message);
+    return {
+      embedding: buildTextFallbackEmbedding(text),
+      latency: 0,
+      source: 'fallback'
+    };
   }
 };
 

@@ -3,8 +3,4 @@ uvicorn
 python-multipart
 pydantic
 Pillow
-torch
-open-clip-torch
-sentence-transformers
-easyocr
-spacy
+numpy

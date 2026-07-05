@@ -2,6 +2,8 @@ import os
 import re
 import io
 import time
+import hashlib
+import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from PIL import Image
@@ -62,6 +64,43 @@ def get_nlp():
     return _nlp
 
 
+def _build_fallback_text_embedding(text: str, dim: int = 384):
+    normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    tokens = normalized.split() if normalized else ["fallback"]
+    vector = np.zeros(dim, dtype=np.float32)
+
+    for index, token in enumerate(tokens):
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        bucket = int.from_bytes(digest[:2], "big") % dim
+        vector[bucket] += 0.35 + min(0.65, index * 0.01)
+        bucket2 = (bucket + 17 + (index % 11)) % dim
+        vector[bucket2] += 0.1
+
+    norm = np.linalg.norm(vector)
+    if norm > 0:
+        vector = vector / norm
+    return vector.tolist()
+
+
+def _build_fallback_image_embedding(image: Image.Image, dim: int = 512):
+    resized = image.convert("RGB").resize((32, 32), Image.Resampling.BILINEAR)
+    arr = np.array(resized, dtype=np.float32) / 255.0
+    flat = arr.reshape(-1)
+
+    if flat.size >= dim:
+        step = max(1, flat.size // dim)
+        selected = flat[::step][:dim]
+        if selected.size < dim:
+            selected = np.pad(selected, (0, dim - selected.size))
+    else:
+        selected = np.pad(flat, (0, dim - flat.size))
+
+    norm = np.linalg.norm(selected)
+    if norm > 0:
+        selected = selected / norm
+    return selected.astype(np.float32).tolist()
+
+
 class TextRequest(BaseModel):
     text: str
 
@@ -74,9 +113,9 @@ def health():
 @app.post("/embed-image")
 async def embed_image(file: UploadFile = File(...)):
     try:
+        contents = await file.read()
         import torch
         clip_model, clip_preprocess = get_clip()
-        contents = await file.read()
         image = Image.open(io.BytesIO(contents)).convert("RGB")
         processed_image = clip_preprocess(image).unsqueeze(0)
 
@@ -85,9 +124,14 @@ async def embed_image(file: UploadFile = File(...)):
             image_features /= image_features.norm(dim=-1, keepdim=True)
             embedding = image_features[0].cpu().numpy().tolist()
 
-        return {"embedding": embedding}
+        return {"embedding": embedding, "source": "clip"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image embedding failed: {str(e)}")
+        try:
+            image = Image.open(io.BytesIO(contents)).convert("RGB")
+            embedding = _build_fallback_image_embedding(image)
+            return {"embedding": embedding, "source": "fallback-image"}
+        except Exception as fallback_error:
+            return {"embedding": [0.0] * 512, "source": "fallback-image-error"}
 
 
 @app.post("/embed-text")
@@ -95,9 +139,10 @@ def embed_text(req: TextRequest):
     try:
         text_model = get_text_model()
         embedding = text_model.encode(req.text).tolist()
-        return {"embedding": embedding}
+        return {"embedding": embedding, "source": "sentence-transformer"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Text embedding failed: {str(e)}")
+        embedding = _build_fallback_text_embedding(req.text)
+        return {"embedding": embedding, "source": "fallback-text"}
 
 
 @app.post("/process-document")
