@@ -3,9 +3,10 @@ import React, { useState, useEffect } from 'react';
 const ImageUploader = ({ onImageSelected, initialImage = null, required = false }) => {
   const [preview, setPreview] = useState(null);
 
+  const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
   useEffect(() => {
     if (initialImage) {
-      setPreview(initialImage.startsWith('/') ? `http://localhost:5000${initialImage}` : initialImage);
+      setPreview(initialImage.startsWith('/') ? `${BACKEND}${initialImage}` : initialImage);
     }
   }, [initialImage]);
 
@@ -20,7 +21,7 @@ const ImageUploader = ({ onImageSelected, initialImage = null, required = false 
       reader.readAsDataURL(file);
     } else {
       onImageSelected(null);
-      setPreview(initialImage ? (initialImage.startsWith('/') ? `http://localhost:5000${initialImage}` : initialImage) : null);
+      setPreview(initialImage ? (initialImage.startsWith('/') ? `${BACKEND}${initialImage}` : initialImage) : null);
     }
   };
 

@@ -56,7 +56,7 @@ export default function DashboardTopBar() {
         >
           <div className="w-8 h-8 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-xs font-bold text-zinc-200 flex-shrink-0 overflow-hidden">
             {user?.profilePic ? (
-              <img src={`http://localhost:5000${user.profilePic}`} alt="Profile" className="w-full h-full object-cover" />
+              <img src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'}${user.profilePic}`} alt="Profile" className="w-full h-full object-cover" />
             ) : (
               initials
             )}

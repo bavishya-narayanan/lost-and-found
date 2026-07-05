@@ -19,7 +19,7 @@ export default function ProfilePage() {
     year: user?.year || ''
   })
   const [profilePicFile, setProfilePicFile] = useState(null)
-  const [profilePicPreview, setProfilePicPreview] = useState(user?.profilePic ? `http://localhost:5000${user.profilePic}` : null)
+  const [profilePicPreview, setProfilePicPreview] = useState(user?.profilePic ? `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'}${user.profilePic}` : null)
   const [saving, setSaving] = useState(false)
 
   const handleSave = async (e) => {
@@ -163,7 +163,7 @@ export default function ProfilePage() {
                       year: user?.year || ''
                     })
                     setProfilePicFile(null)
-                    setProfilePicPreview(user?.profilePic ? `http://localhost:5000${user.profilePic}` : null)
+                    setProfilePicPreview(user?.profilePic ? `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'}${user.profilePic}` : null)
                   }}
                   className="px-5 py-2.5 rounded-xl bg-transparent hover:bg-white/5 text-zinc-300 text-sm font-medium transition-colors"
                 >

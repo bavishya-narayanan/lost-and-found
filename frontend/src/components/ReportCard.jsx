@@ -1,7 +1,8 @@
 import React from 'react';
 
 export default function ReportCard({ report, type, onView, onEdit, onDelete }) {
-  const imageUrl = report.image ? (report.image.startsWith('/') ? `http://localhost:5000${report.image}` : report.image) : null;
+  const BACKEND = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
+  const imageUrl = report.image ? (report.image.startsWith('/') ? `${BACKEND}${report.image}` : report.image) : null;
   const dateField = type === 'lost' ? report.dateLost : report.dateFound;
   const formattedDate = new Date(dateField).toLocaleDateString('en-US', {
     year: 'numeric', month: 'short', day: 'numeric'
