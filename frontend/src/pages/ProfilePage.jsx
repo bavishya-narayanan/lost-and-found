@@ -19,7 +19,8 @@ export default function ProfilePage() {
     year: user?.year || ''
   })
   const [profilePicFile, setProfilePicFile] = useState(null)
-  const [profilePicPreview, setProfilePicPreview] = useState(user?.profilePic ? `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'}${user.profilePic}` : null)
+  const getProfilePicUrl = (pic) => pic ? (pic.startsWith('http') ? pic : `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'}${pic}`) : null;
+  const [profilePicPreview, setProfilePicPreview] = useState(getProfilePicUrl(user?.profilePic))
   const [saving, setSaving] = useState(false)
 
   const handleSave = async (e) => {
@@ -163,7 +164,7 @@ export default function ProfilePage() {
                       year: user?.year || ''
                     })
                     setProfilePicFile(null)
-                    setProfilePicPreview(user?.profilePic ? `${import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000'}${user.profilePic}` : null)
+                    setProfilePicPreview(getProfilePicUrl(user?.profilePic))
                   }}
                   className="px-5 py-2.5 rounded-xl bg-transparent hover:bg-white/5 text-zinc-300 text-sm font-medium transition-colors"
                 >
