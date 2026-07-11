@@ -123,8 +123,12 @@ def health():
 @app.get("/warmup")
 def warmup():
     results = {}
-    embedding, source = _hf_text_embed("warmup test sentence")
-    results["text_model"] = "ready" if embedding else "failed or still loading"
+    try:
+        result = client.feature_extraction("warmup test sentence", model=HF_TEXT_MODEL)
+        vec = np.array(result, dtype=np.float32).flatten()
+        results["text_model"] = f"ready (dim={vec.size})"
+    except Exception as e:
+        results["text_model"] = f"error: {str(e)[:300]}"
     return {"status": "warmed_up", "results": results}
 
 
