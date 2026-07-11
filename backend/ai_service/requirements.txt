@@ -5,7 +5,7 @@ python-multipart
 pydantic
 Pillow
 numpy
-torch==2.5.1+cpu
+torch==2.13.0+cpu
 open_clip_torch
 sentence-transformers
 easyocr
