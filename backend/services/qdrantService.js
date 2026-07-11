@@ -158,9 +158,14 @@ const searchVectors = async (collectionName, vector, filters = {}, limit = confi
       }
     };
 
+    // Temporarily disabled Qdrant-level filtering because it requires 
+    // manual payload index creation on Qdrant Cloud. 
+    // matchingService.js already manually calculates category/type penalties.
+    /*
     if (usesStrictFiltering && filterMust.length > 0) {
       body.filter = { must: filterMust };
     }
+    */
 
     const res = await fetch(`${QDRANT_URL}/collections/${collectionName}/points/search`, {
       method: 'POST',
