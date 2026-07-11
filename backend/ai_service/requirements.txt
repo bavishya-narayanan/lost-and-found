@@ -1,12 +1,7 @@
---extra-index-url https://download.pytorch.org/whl/cpu
 fastapi
 uvicorn[standard]
 python-multipart
 pydantic
 Pillow
 numpy
-torch==2.13.0+cpu
-open_clip_torch
-sentence-transformers
-easyocr
-spacy
+requests

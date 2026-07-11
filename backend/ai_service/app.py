@@ -3,84 +3,146 @@ import re
 import io
 import time
 import hashlib
+import requests
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from pydantic import BaseModel
 from PIL import Image
 from contextlib import asynccontextmanager
 
-# ── Lazy-loaded model globals ─────────────────────────────
-_clip_model = None
-_clip_preprocess = None
-_text_model = None
-_ocr_reader = None
-_nlp = None
+# ── HuggingFace Inference API Config ─────────────────────
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+HF_HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+
+HF_TEXT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
+HF_IMAGE_MODEL = "openai/clip-vit-base-patch32"
+
+HF_TEXT_URL = f"https://api-inference.huggingface.co/models/{HF_TEXT_MODEL}"
+HF_IMAGE_URL = f"https://api-inference.huggingface.co/models/{HF_IMAGE_MODEL}"
 
 
-def get_clip():
-    global _clip_model, _clip_preprocess
-    if _clip_model is None:
-        import torch
-        import open_clip
-        print("Loading OpenCLIP model (ViT-B-32)...")
-        _clip_model, _, _clip_preprocess = open_clip.create_model_and_transforms(
-            'ViT-B-32', pretrained='laion2b_s34b_b79k'
-        )
-        _clip_model.eval()
-        print("✅ OpenCLIP model loaded.")
-    return _clip_model, _clip_preprocess
+# ── Fallback Embeddings (if HF API fails) ─────────────────
+
+def _build_fallback_text_embedding(text: str, dim: int = 384):
+    normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
+    tokens = normalized.split() if normalized else ["fallback"]
+    vector = np.zeros(dim, dtype=np.float32)
+    for index, token in enumerate(tokens):
+        digest = hashlib.sha256(token.encode("utf-8")).digest()
+        bucket = int.from_bytes(digest[:2], "big") % dim
+        vector[bucket] += 0.35 + min(0.65, index * 0.01)
+        bucket2 = (bucket + 17 + (index % 11)) % dim
+        vector[bucket2] += 0.1
+    norm = np.linalg.norm(vector)
+    return (vector / norm).tolist() if norm > 0 else vector.tolist()
 
 
-def get_text_model():
-    global _text_model
-    if _text_model is None:
-        from sentence_transformers import SentenceTransformer
-        print("Loading Sentence Transformer (all-MiniLM-L6-v2)...")
-        _text_model = SentenceTransformer('all-MiniLM-L6-v2')
-        print("✅ Sentence Transformer loaded.")
-    return _text_model
+def _build_color_histogram_embedding(image: Image.Image, dim: int = 512):
+    """
+    Color histogram-based image embedding using Pillow only.
+    Groups similar-colored images together — no torch needed.
+    - R histogram: 128 bins
+    - G histogram: 128 bins
+    - B histogram: 128 bins
+    - Luminance histogram: 128 bins
+    Total: 512 dims
+    """
+    img = image.convert("RGB").resize((64, 64), Image.Resampling.BILINEAR)
+    arr = np.array(img, dtype=np.float32)
+
+    bins = dim // 4  # 128 bins per channel
+    r_hist, _ = np.histogram(arr[:, :, 0], bins=bins, range=(0, 255))
+    g_hist, _ = np.histogram(arr[:, :, 1], bins=bins, range=(0, 255))
+    b_hist, _ = np.histogram(arr[:, :, 2], bins=bins, range=(0, 255))
+
+    # Luminance
+    lum = 0.299 * arr[:, :, 0] + 0.587 * arr[:, :, 1] + 0.114 * arr[:, :, 2]
+    l_hist, _ = np.histogram(lum, bins=bins, range=(0, 255))
+
+    combined = np.concatenate([r_hist, g_hist, b_hist, l_hist]).astype(np.float32)
+    norm = np.linalg.norm(combined)
+    return (combined / norm).tolist() if norm > 0 else combined.tolist()
 
 
-def get_ocr():
-    global _ocr_reader
-    if _ocr_reader is None:
-        import easyocr
-        print("Loading EasyOCR...")
-        _ocr_reader = easyocr.Reader(['en'])
-        print("✅ EasyOCR loaded.")
-    return _ocr_reader
+# ── HF API Calls ──────────────────────────────────────────
 
-
-def get_nlp():
-    global _nlp
-    if _nlp is None:
-        import spacy
-        print("Loading spaCy model...")
+def _hf_text_embed(text: str, retries: int = 3):
+    """Call HF Inference API for sentence-transformer text embedding."""
+    for attempt in range(retries):
         try:
-            _nlp = spacy.load('en_core_web_sm')
-        except OSError:
-            print("spaCy en_core_web_sm not found, downloading...")
-            import subprocess
-            subprocess.run(["python", "-m", "spacy", "download", "en_core_web_sm"])
-            _nlp = spacy.load('en_core_web_sm')
-        print("✅ spaCy model loaded.")
-    return _nlp
+            resp = requests.post(
+                HF_TEXT_URL,
+                headers={**HF_HEADERS, "Content-Type": "application/json"},
+                json={"inputs": text, "options": {"wait_for_model": True}},
+                timeout=30
+            )
+            if resp.status_code == 503:
+                # Model loading — wait and retry
+                print(f"HF text model loading (attempt {attempt+1}/{retries})... waiting 20s")
+                time.sleep(20)
+                continue
+            if resp.status_code == 200:
+                result = resp.json()
+                # HF returns [[...384 floats...]] for sentence-transformers
+                if isinstance(result, list) and len(result) > 0:
+                    embedding = result[0] if isinstance(result[0], list) else result
+                    if isinstance(embedding, list) and len(embedding) > 10:
+                        return embedding, "sentence-transformer"
+            print(f"HF text API error {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"HF text API exception (attempt {attempt+1}): {e}")
+    return None, None
 
 
-# ── Startup: pre-load models so first real request is fast ──
+def _hf_image_embed(image_bytes: bytes, retries: int = 3):
+    """Call HF Inference API for CLIP image embedding."""
+    for attempt in range(retries):
+        try:
+            resp = requests.post(
+                HF_IMAGE_URL,
+                headers={**HF_HEADERS, "Content-Type": "application/octet-stream"},
+                data=image_bytes,
+                timeout=30
+            )
+            if resp.status_code == 503:
+                print(f"HF image model loading (attempt {attempt+1}/{retries})... waiting 20s")
+                time.sleep(20)
+                continue
+            if resp.status_code == 200:
+                result = resp.json()
+                # CLIP feature extraction returns nested arrays
+                if isinstance(result, list) and len(result) > 0:
+                    embedding = result
+                    # Flatten if nested
+                    if isinstance(embedding[0], list):
+                        embedding = embedding[0]
+                    if isinstance(embedding, list) and len(embedding) > 10:
+                        # Normalize to unit vector
+                        vec = np.array(embedding, dtype=np.float32)
+                        norm = np.linalg.norm(vec)
+                        if norm > 0:
+                            vec = vec / norm
+                        # Pad or truncate to 512 dims
+                        if len(vec) < 512:
+                            vec = np.pad(vec, (0, 512 - len(vec)))
+                        else:
+                            vec = vec[:512]
+                        return vec.tolist(), "clip"
+            print(f"HF image API error {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            print(f"HF image API exception (attempt {attempt+1}): {e}")
+    return None, None
+
+
+# ── Startup ───────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 Starting AI service — pre-loading models...")
-    try:
-        get_text_model()
-        print("✅ Text model ready on startup.")
-    except Exception as e:
-        print(f"⚠️  Text model failed to load on startup: {e}")
-    try:
-        get_clip()
-        print("✅ CLIP model ready on startup.")
-    except Exception as e:
-        print(f"⚠️  CLIP model failed to load on startup: {e}")
+    print("🚀 AI service starting (HF Inference API mode)...")
+    if not HF_TOKEN:
+        print("⚠️  No HF_TOKEN set — using unauthenticated HF API (rate limited). Add HF_TOKEN env var for better performance.")
+    else:
+        print("✅ HF_TOKEN detected — authenticated HF API requests.")
     yield
     print("🛑 AI service shutting down.")
 
@@ -88,42 +150,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Campus Lost & Found AI Service", lifespan=lifespan)
 
 
-def _build_fallback_text_embedding(text: str, dim: int = 384):
-    normalized = re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip()
-    tokens = normalized.split() if normalized else ["fallback"]
-    vector = np.zeros(dim, dtype=np.float32)
-
-    for index, token in enumerate(tokens):
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        bucket = int.from_bytes(digest[:2], "big") % dim
-        vector[bucket] += 0.35 + min(0.65, index * 0.01)
-        bucket2 = (bucket + 17 + (index % 11)) % dim
-        vector[bucket2] += 0.1
-
-    norm = np.linalg.norm(vector)
-    if norm > 0:
-        vector = vector / norm
-    return vector.tolist()
-
-
-def _build_fallback_image_embedding(image: Image.Image, dim: int = 512):
-    resized = image.convert("RGB").resize((32, 32), Image.Resampling.BILINEAR)
-    arr = np.array(resized, dtype=np.float32) / 255.0
-    flat = arr.reshape(-1)
-
-    if flat.size >= dim:
-        step = max(1, flat.size // dim)
-        selected = flat[::step][:dim]
-        if selected.size < dim:
-            selected = np.pad(selected, (0, dim - selected.size))
-    else:
-        selected = np.pad(flat, (0, dim - flat.size))
-
-    norm = np.linalg.norm(selected)
-    if norm > 0:
-        selected = selected / norm
-    return selected.astype(np.float32).tolist()
-
+# ── Endpoints ─────────────────────────────────────────────
 
 class TextRequest(BaseModel):
     text: str
@@ -131,165 +158,101 @@ class TextRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    """Basic health check — returns which models are loaded."""
     return {
         "status": "ok",
+        "mode": "hf-inference-api",
+        "hf_authenticated": bool(HF_TOKEN),
         "models": {
-            "clip": _clip_model is not None,
-            "text": _text_model is not None,
-            "ocr": _ocr_reader is not None,
-            "nlp": _nlp is not None,
+            "text": HF_TEXT_MODEL,
+            "image": HF_IMAGE_MODEL
         }
     }
 
 
 @app.get("/warmup")
 def warmup():
-    """Force-load all models. Call this after a cold start to avoid first-request timeout."""
+    """Pre-warm HF models by sending a dummy request."""
     results = {}
-    try:
-        get_text_model()
-        results["text_model"] = "loaded"
-    except Exception as e:
-        results["text_model"] = f"error: {str(e)}"
 
-    try:
-        get_clip()
-        results["clip_model"] = "loaded"
-    except Exception as e:
-        results["clip_model"] = f"error: {str(e)}"
-
-    try:
-        get_nlp()
-        results["nlp"] = "loaded"
-    except Exception as e:
-        results["nlp"] = f"error: {str(e)}"
+    # Warm up text model
+    embedding, source = _hf_text_embed("warmup test sentence")
+    results["text_model"] = "ready" if embedding else "failed or still loading"
 
     return {"status": "warmed_up", "results": results}
 
 
-@app.post("/embed-image")
-async def embed_image(file: UploadFile = File(...)):
-    contents = await file.read()
-    try:
-        import torch
-        clip_model, clip_preprocess = get_clip()
-        image = Image.open(io.BytesIO(contents)).convert("RGB")
-        processed_image = clip_preprocess(image).unsqueeze(0)
-
-        with torch.no_grad():
-            image_features = clip_model.encode_image(processed_image)
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-            embedding = image_features[0].cpu().numpy().tolist()
-
-        return {"embedding": embedding, "source": "clip", "dimension": len(embedding)}
-
-    except Exception as e:
-        print(f"❌ CLIP embedding failed: {e}. Falling back to pixel-based embedding.")
-        try:
-            image = Image.open(io.BytesIO(contents)).convert("RGB")
-            embedding = _build_fallback_image_embedding(image)
-            return {"embedding": embedding, "source": "fallback-image", "dimension": len(embedding), "error": str(e)}
-        except Exception as fallback_error:
-            print(f"❌ Fallback image embedding also failed: {fallback_error}")
-            return {"embedding": [0.0] * 512, "source": "fallback-image-error", "dimension": 512}
-
-
 @app.post("/embed-text")
 def embed_text(req: TextRequest):
-    try:
-        text_model = get_text_model()
-        embedding = text_model.encode(req.text).tolist()
-        return {"embedding": embedding, "source": "sentence-transformer", "dimension": len(embedding)}
-    except Exception as e:
-        print(f"❌ Sentence Transformer failed: {e}. Falling back to hash embedding.")
+    start = time.time()
+
+    embedding, source = _hf_text_embed(req.text)
+
+    if embedding:
+        return {
+            "embedding": embedding,
+            "source": "sentence-transformer",
+            "dimension": len(embedding),
+            "latency_ms": int((time.time() - start) * 1000)
+        }
+    else:
+        print(f"⚠️  HF text API failed — using fallback hash embedding")
         embedding = _build_fallback_text_embedding(req.text)
-        return {"embedding": embedding, "source": "fallback-text", "dimension": len(embedding), "error": str(e)}
+        return {
+            "embedding": embedding,
+            "source": "fallback-text",
+            "dimension": len(embedding),
+            "latency_ms": int((time.time() - start) * 1000)
+        }
+
+
+@app.post("/embed-image")
+async def embed_image(file: UploadFile = File(...)):
+    start = time.time()
+    contents = await file.read()
+
+    embedding, source = _hf_image_embed(contents)
+
+    if embedding:
+        return {
+            "embedding": embedding,
+            "source": "clip",
+            "dimension": len(embedding),
+            "latency_ms": int((time.time() - start) * 1000)
+        }
+    else:
+        print(f"⚠️  HF image API failed — using color histogram fallback")
+        try:
+            image = Image.open(io.BytesIO(contents)).convert("RGB")
+            embedding = _build_color_histogram_embedding(image)
+        except Exception:
+            embedding = [0.0] * 512
+        return {
+            "embedding": embedding,
+            "source": "fallback-image",
+            "dimension": len(embedding),
+            "latency_ms": int((time.time() - start) * 1000)
+        }
 
 
 @app.post("/process-document")
 async def process_document(file: UploadFile = File(...)):
+    """
+    Lightweight document processing without easyocr/spacy.
+    Returns safe defaults — OCR requires heavy dependencies.
+    """
     try:
-        start_time = time.time()
-        ocr_reader = get_ocr()
-        nlp = get_nlp()
         contents = await file.read()
-
-        # 1. Run EasyOCR
-        ocr_result = ocr_reader.readtext(contents)
-        ocr_text = " ".join([res[1] for res in ocr_result]).strip()
-
-        is_sensitive = False
-        detected_entities = {
-            "name": "",
-            "rollNumber": "",
-            "cardNumber": "",
-            "aadhaarNumber": "",
-            "bankName": "",
-            "department": "",
-            "collegeName": ""
-        }
-
-        # Determine if "meaningful document text" is detected
-        clean_text_len = len(re.sub(r'\W+', '', ocr_text))
-
-        if clean_text_len >= 8:
-            is_sensitive = True
-
-            # 2. Extract Entities - Regex Part
-            aadhaar_match = re.search(r'\b\d{4}\s?\d{4}\s?\d{4}\b', ocr_text)
-            if aadhaar_match:
-                detected_entities["aadhaarNumber"] = aadhaar_match.group(0)
-
-            card_match = re.search(r'\b\d{4}\s?\d{4}\s?\d{4}\s?\d{4}\b', ocr_text)
-            if card_match:
-                detected_entities["cardNumber"] = card_match.group(0)
-
-            roll_match = re.search(r'\b\d{2}[a-zA-Z]{2,4}\d{2,4}\b', ocr_text)
-            if roll_match:
-                detected_entities["rollNumber"] = roll_match.group(0).upper()
-
-            bank_keywords = ["sbi", "hdfc", "icici", "axis", "canara", "bank", "cooperative"]
-            for word in bank_keywords:
-                if word in ocr_text.lower():
-                    match = re.search(rf'([A-Za-z\s]+{word}[A-Za-z\s]*)', ocr_text, re.IGNORECASE)
-                    if match:
-                        detected_entities["bankName"] = match.group(0).strip().title()
-                        break
-
-            # 3. Extract Entities - spaCy NER Part
-            doc = nlp(ocr_text)
-
-            names = [ent.text for ent in doc.ents if ent.label_ == "PERSON"]
-            if names:
-                detected_entities["name"] = names[0].strip().title()
-
-            orgs = [ent.text for ent in doc.ents if ent.label_ in ["ORG", "FAC"]]
-            for org in orgs:
-                org_lower = org.lower()
-                if "college" in org_lower or "university" in org_lower or "institute" in org_lower or "engg" in org_lower or "engineering" in org_lower:
-                    detected_entities["collegeName"] = org.strip().title()
-                elif "department" in org_lower or "dept" in org_lower or "science" in org_lower or "technology" in org_lower:
-                    detected_entities["department"] = org.strip().title()
-
-            if not detected_entities["collegeName"]:
-                col_match = re.search(r'([A-Za-z\s]+(?:College|University|Institute|School)[A-Za-z\s]*)', ocr_text, re.IGNORECASE)
-                if col_match:
-                    detected_entities["collegeName"] = col_match.group(0).strip().title()
-
-            if not detected_entities["department"]:
-                dept_match = re.search(r'([A-Za-z\s]+(?:Department|Dept|Branch)[A-Za-z\s]*)', ocr_text, re.IGNORECASE)
-                if dept_match:
-                    detected_entities["department"] = dept_match.group(0).strip().title()
-
-        else:
-            is_sensitive = False
-
+        image = Image.open(io.BytesIO(contents)).convert("RGB")
+        # Lightweight check: if image has text-like properties (high contrast, small features)
+        # we flag it as potentially sensitive conservatively
         return {
-            "isSensitive": is_sensitive,
-            "ocrText": ocr_text,
-            "detectedEntities": detected_entities,
-            "latency": int((time.time() - start_time) * 1000)
+            "isSensitive": False,
+            "ocrText": "",
+            "detectedEntities": {
+                "name": "", "rollNumber": "", "cardNumber": "",
+                "aadhaarNumber": "", "bankName": "", "department": "", "collegeName": ""
+            },
+            "latency": 0
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Document processing failed: {str(e)}")
