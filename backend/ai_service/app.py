@@ -17,8 +17,10 @@ HF_HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 HF_TEXT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 HF_IMAGE_MODEL = "openai/clip-vit-base-patch32"
 
-HF_TEXT_URL = f"https://api-inference.huggingface.co/models/{HF_TEXT_MODEL}"
-HF_IMAGE_URL = f"https://api-inference.huggingface.co/models/{HF_IMAGE_MODEL}"
+# HuggingFace migrated from api-inference.huggingface.co (deprecated) to router.huggingface.co
+HF_BASE = "https://router.huggingface.co/hf-inference/models"
+HF_TEXT_URL = f"{HF_BASE}/{HF_TEXT_MODEL}"
+HF_IMAGE_URL = f"{HF_BASE}/{HF_IMAGE_MODEL}"
 
 
 # ── Fallback Embeddings (if HF API fails) ─────────────────
