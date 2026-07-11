@@ -90,6 +90,11 @@ const generateImageEmbedding = async (imagePath) => {
     }
 
     const data = await response.json();
+    if (data.source && data.source !== 'clip') {
+      console.warn(`⚠️  [Image Embedding] Using fallback source: "${data.source}" (real CLIP not used). Reason: ${data.error || 'unknown'}`);
+    } else {
+      console.log(`✅ [Image Embedding] Real CLIP embedding generated. Dimension: ${data.dimension}`);
+    }
     return {
       embedding: data.embedding,
       latency: Date.now() - startTime,
@@ -124,6 +129,11 @@ const generateTextEmbedding = async (text) => {
     }
 
     const data = await response.json();
+    if (data.source && data.source !== 'sentence-transformer') {
+      console.warn(`⚠️  [Text Embedding] Using fallback source: "${data.source}" (real model not used). Reason: ${data.error || 'unknown'}`);
+    } else {
+      console.log(`✅ [Text Embedding] Real Sentence-Transformer embedding generated. Dimension: ${data.dimension}`);
+    }
     return {
       embedding: data.embedding,
       latency: Date.now() - startTime,
