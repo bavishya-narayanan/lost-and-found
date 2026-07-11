@@ -5,3 +5,4 @@ pydantic
 Pillow
 numpy
 requests
+huggingface_hub
