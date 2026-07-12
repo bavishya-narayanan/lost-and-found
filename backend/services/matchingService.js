@@ -73,16 +73,50 @@ exports.findMatches = async (newItem, itemType, textEmbedding, imageEmbedding, c
     const retrievedCount = textHits.length + imageHits.length;
     console.log(`[Matching] Qdrant returned ${textHits.length} text hits and ${imageHits.length} image hits.`);
 
-    // Merge Candidate Lists
+    // ── JS-level pre-filtering ────────────────────────────────────────────────
+    // Qdrant payload-level filtering is disabled (requires indexed fields on Qdrant Cloud).
+    // We replicate ALL original filter criteria here in JavaScript:
+    //   1. reportType   → must be the opposite of newItem (Lost↔Found)
+    //   2. status       → must be 'Active'
+    //   3. category     → must match newItem's category (if available)
+    //   4. campusZone   → must match if both zones are known (not 'Unknown')
+    // ─────────────────────────────────────────────────────────────────────────
+    const passesFilters = (hit) => {
+      const p = hit.payload;
+      if (!p) return false;
+
+      // 1. Opposite report type
+      if (p.reportType !== targetType) return false;
+
+      // 2. Must be Active
+      if (p.status && p.status !== 'Active') return false;
+
+      // 3. Category must match (case-insensitive)
+      if (newItem.category && p.category &&
+          p.category.toLowerCase() !== newItem.category.toLowerCase()) return false;
+
+      // 4. Campus zone must match when both are known
+      if (campusZone && campusZone !== 'Unknown' &&
+          p.campusZone && p.campusZone !== 'Unknown' &&
+          p.campusZone !== campusZone) return false;
+
+      return true;
+    };
+
     const candidateIds = new Set();
     const candidateScores = {}; // reportId -> { textScore, imageScore }
 
     for (const hit of textHits) {
+      if (!passesFilters(hit)) {
+        console.log(`[Matching] ✗ Skipping text hit ${hit.reportId} (type=${hit.payload?.reportType}, status=${hit.payload?.status}, cat=${hit.payload?.category}, zone=${hit.payload?.campusZone})`);
+        continue;
+      }
       candidateIds.add(hit.reportId);
       candidateScores[hit.reportId] = { textScore: hit.score, imageScore: null };
     }
 
     for (const hit of imageHits) {
+      if (!passesFilters(hit)) continue;
       candidateIds.add(hit.reportId);
       if (!candidateScores[hit.reportId]) {
         candidateScores[hit.reportId] = { textScore: null, imageScore: hit.score };
@@ -90,6 +124,8 @@ exports.findMatches = async (newItem, itemType, textEmbedding, imageEmbedding, c
         candidateScores[hit.reportId].imageScore = hit.score;
       }
     }
+
+    console.log(`[Matching] After full pre-filtering (type=${targetType}, category=${newItem.category}, zone=${campusZone}): ${candidateIds.size} valid candidates.`);
 
     let candidates = [];
     if (candidateIds.size === 0) {
@@ -163,6 +199,12 @@ exports.findMatches = async (newItem, itemType, textEmbedding, imageEmbedding, c
       }
 
       const aiConfidence = getConfidenceLevel(finalScore);
+
+      // ── Per-candidate score breakdown (debug) ───────────────────────────────
+      console.log(`[Matching] Candidate ${candidate._id} ("${candidate.title}")`);
+      console.log(`  semantic=${semanticSimilarity}, category=${catScore}, location=${locScore}, date=${dateScore}, clip=${clipSimilarity}`);
+      console.log(`  → finalScore=${finalScore} (threshold=${config.FINAL_MATCH_THRESHOLD}) → ${finalScore >= config.FINAL_MATCH_THRESHOLD ? '✅ MATCH' : '✗ below threshold'}`);
+      // ─────────────────────────────────────────────────────────────────────────
 
       if (finalScore >= config.FINAL_MATCH_THRESHOLD) {
         // Create Match in MongoDB
